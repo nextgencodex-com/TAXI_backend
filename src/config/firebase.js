@@ -25,6 +25,14 @@ if (!admin.apps.length) {
 
 // Get Firestore database instance
 const db = admin.firestore();
+// Configure Firestore to ignore undefined properties so writes won't fail when
+// objects contain undefined fields. This is safe for our simplified backend.
+try {
+  db.settings({ ignoreUndefinedProperties: true });
+} catch (e) {
+  // Some older SDKs or emulators may not support settings; ignore errors.
+  console.warn('Could not apply Firestore settings:', e.message || e);
+}
 
 // Get Firebase Auth instance
 const auth = admin.auth();

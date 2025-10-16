@@ -83,59 +83,10 @@ const getSharedRideById = async (req, res) => {
 // Create a new shared ride
 const createSharedRide = async (req, res) => {
   try {
-    const {
-      driverName,
-      driverImage,
-      vehicle,
-      pickupLocation,
-      destinationLocation,
-      time,
-      duration,
-      passengers,
-      luggage,
-      handCarry,
-      availableSeats,
-      totalSeats,
-      price,
-      frequency
-    } = req.body;
-
-    // Validate required fields
-    if (!driverName || !vehicle || !pickupLocation || !destinationLocation || 
-        !time || !duration || !availableSeats || !totalSeats || !price) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required fields'
-      });
-    }
-
-    // Validate seat numbers
-    const availableSeatsNum = parseInt(availableSeats);
-    const totalSeatsNum = parseInt(totalSeats);
-
-    if (availableSeatsNum > totalSeatsNum || availableSeatsNum < 0 || totalSeatsNum < 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid seat configuration'
-      });
-    }
-
-    const rideData = {
-      driverName,
-      driverImage: driverImage || '/images/default-driver.jpg',
-      vehicle,
-      pickupLocation,
-      destinationLocation,
-      time,
-      duration,
-      passengers: passengers || '1',
-      luggage: luggage || '0',
-      handCarry: handCarry || '0',
-      availableSeats: availableSeatsNum,
-      totalSeats: totalSeatsNum,
-      price,
-      frequency: frequency || 'one-time'
-    };
+    console.log('Create Shared Ride Payload:', req.body);
+    // Store the full payload coming from the frontend as-is.
+    // The model will handle persistence and any necessary coercions.
+    const rideData = req.body;
 
     const newRide = await SharedRide.create(rideData);
 
@@ -146,10 +97,12 @@ const createSharedRide = async (req, res) => {
     });
   } catch (error) {
     console.error('Error creating shared ride:', error);
+    // Include stack during development to help debugging (remove or guard in production)
     res.status(500).json({
       success: false,
       message: 'Failed to create shared ride',
-      error: error.message
+      error: error.message,
+      stack: error.stack
     });
   }
 };

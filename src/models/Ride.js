@@ -260,8 +260,15 @@ class Ride {
 
   // Convert to Firestore format
   toFirestore() {
-    const data = { ...this };
-    delete data.id;
+    const raw = { ...this };
+    delete raw.id;
+
+    // Remove undefined properties because Firestore rejects undefined values
+    const data = {};
+    for (const [key, value] of Object.entries(raw)) {
+      if (value !== undefined) data[key] = value;
+    }
+
     return data;
   }
 }
