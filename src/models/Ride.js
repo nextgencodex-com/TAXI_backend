@@ -27,7 +27,12 @@ class Ride {
     this.feedback = data.feedback || '';
     this.createdAt = data.createdAt || new Date();
     this.updatedAt = data.updatedAt || new Date();
-    
+
+    // Customer fields for private rides
+    this.customerName = data.customerName || '';
+    this.customerEmail = data.customerEmail || '';
+    this.customerPhone = data.customerPhone || '';
+
     // Shared ride specific fields
     if (this.rideType === 'shared') {
       this.maxPassengers = data.maxPassengers || 4;

@@ -6,12 +6,8 @@ const { Ride, User, Booking } = require('../models');
  */
 const createPrivateRide = async (req, res) => {
   try {
-    // Accept the entire payload from the frontend. Different clients may send
-    // fields either as top-level properties or nested under e.g. `passenger` or
-    // `pickup` / `destination` objects. We'll try several common locations and
-    // fall back to sensible defaults. Also persist the raw payload on the ride
-    // so no frontend data is lost.
     const raw = req.body || {};
+    console.log('Received private ride payload:', JSON.stringify(raw).slice(0, 1000));
 
     // Helper to safely read nested values with fallback order
     const pick = (...paths) => {
@@ -36,29 +32,49 @@ const createPrivateRide = async (req, res) => {
       return undefined;
     };
 
-    const passengerName = pick('passengerName', ['passenger', 'name'], ['passenger', 'fullName']);
-    const passengerPhone = pick('passengerPhone', ['passenger', 'phone'], ['passenger', 'phoneNumber']);
+  const passengerName = pick('passengerName', ['passenger', 'name'], ['passenger', 'fullName']);
+  const passengerPhone = pick('passengerPhone', ['passenger', 'phone'], ['passenger', 'phoneNumber']);
+  const passengerEmail = pick('passengerEmail', ['passenger', 'email'], ['personalData', 'email']);
     const pickupLocation = pick('pickupLocation', ['pickup', 'location'], ['pickup', 'coords'], 'pickupLocation');
     const destination = pick('destination', ['destination', 'location'], ['destination', 'coords'], 'destination');
     const pickupAddress = pick('pickupAddress', ['pickup', 'address']);
     const destinationAddress = pick('destinationAddress', ['destination', 'address']);
+  const bookingDate = pick('bookingDate', ['booking', 'date'], 'scheduledTime');
+  const vehicleName = pick('vehicle', 'vehicleName', ['vehicle', 'name']);
     const passengers = pick('passengers', ['passenger', 'count'], ['passengers']);
     const notes = pick('notes', ['meta', 'notes'], 'notes');
 
-    // Validate required data using the flexible picks above
-    if (!passengerName || !passengerPhone || !pickupLocation || !destination) {
-      return res.status(400).json({ success: false, message: 'Required fields missing' });
-    }
+    // No validation: accept and store all incoming data, even if fields are missing or empty
 
     // Find or create passenger
     let passenger = await User.findByPhoneNumber(passengerPhone);
     if (!passenger) {
-      passenger = await User.create({ name: passengerName, phoneNumber: passengerPhone, role: 'passenger' });
+      passenger = await User.create({ name: passengerName, phoneNumber: passengerPhone, email: passengerEmail || undefined, role: 'passenger' });
+    } else {
+      // Always save the submitted email in the ride, even if user already exists
+      if (passengerEmail && !passenger.email) {
+        // Best-effort update of email on existing user if it's missing
+        try {
+          await db.collection('users').doc(passenger.id).update({ email: passengerEmail });
+          passenger.email = passengerEmail;
+        } catch (e) {
+          console.warn('Could not update passenger email:', e?.message || String(e));
+        }
+      }
     }
 
     // Build ride payload and force rideType to 'private'
     // Persist ride with core fields but also attach the raw frontend payload
     // so clients/admins can inspect any extra fields that were sent.
+    // Parse booking date into Date if possible
+    const parseDate = (v) => {
+      try {
+        if (!v) return null;
+        const d = new Date(v);
+        return isNaN(d.getTime()) ? null : d;
+      } catch { return null; }
+    };
+
     const ridePayload = {
       passengerId: passenger.id,
       pickupLocation,
@@ -68,6 +84,12 @@ const createPrivateRide = async (req, res) => {
       rideType: 'private',
       passengers: Number(passengers) || 1,
       notes: notes || '',
+      // Persist entered customer-facing fields for admin/UI convenience
+      customerName: passengerName,
+      customerPhone: passengerPhone,
+      customerEmail: passengerEmail || '',
+      vehicle: vehicleName || '',
+      scheduledTime: parseDate(bookingDate) || bookingDate || null,
       // meta/rawPayload is optional on the Ride model but useful to keep
       rawPayload: raw,
     };
@@ -82,10 +104,15 @@ const createPrivateRide = async (req, res) => {
     const booking = await Booking.create({
       rideId: ride.id,
       passengerId: passenger.id,
-      bookingType: 'immediate',
+      bookingType: (sanitized.scheduledTime ? 'scheduled' : 'immediate'),
     });
+    const customer = {
+      fullName: passengerName,
+      email: passenger.email || passengerEmail || '',
+      phone: passengerPhone,
+    };
 
-    res.status(201).json({ success: true, message: 'Private ride created', data: { ride, booking, passenger } });
+    res.status(201).json({ success: true, message: 'Private ride created', data: { ride, booking, passenger, customer } });
   } catch (error) {
     console.error('Error creating private ride:', error);
     res.status(500).json({ success: false, message: 'Failed to create private ride', error: error.message });
@@ -95,10 +122,6 @@ const createPrivateRide = async (req, res) => {
 const getAllPrivateRides = async (req, res) => {
   try {
     const { limit = 50 } = req.query;
-    // Avoid using orderBy here because Firestore requires a composite index when
-    // combining a where() on one field with orderBy() on another. To keep the
-    // endpoint working in development without creating an index, fetch the
-    // filtered documents and sort them in JS by createdAt.
     const snapshot = await db.collection('rides')
       .where('rideType', '==', 'private')
       .limit(parseInt(limit))
@@ -106,6 +129,41 @@ const getAllPrivateRides = async (req, res) => {
 
     const rides = [];
     snapshot.forEach(doc => rides.push(new Ride({ id: doc.id, ...doc.data() })));
+
+    // For each ride, attach customer details (best-effort)
+    const ridesWithCustomer = await Promise.all(rides.map(async (ride) => {
+      try {
+        // Always check all possible sources for customer details
+        const raw = (ride.rawPayload || {});
+        const pd = raw.personalData || {};
+        const pg = raw.passenger || {};
+
+
+        // Always prefer the email from the ride payload if present
+        let fullName = ride.customerName || pd.fullName || pg.name || pg.fullName || raw.passengerName || raw.customerName || 'N/A';
+        let email = ride.customerEmail || raw.passengerEmail || pd.email || pg.email || raw.customerEmail || raw.email || (raw.passenger && raw.passenger.email) || 'N/A';
+        let phone = ride.customerPhone || pd.phone || pg.phone || pg.phoneNumber || raw.passengerPhone || raw.customerPhone || raw.phone || (raw.passenger && raw.passenger.phone) || (raw.passenger && raw.passenger.phoneNumber) || 'N/A';
+
+        // Only use user record for missing name/phone, never override email from payload
+        if (ride.passengerId) {
+          const u = await User.findById(ride.passengerId);
+          if (u) {
+            fullName = fullName !== 'N/A' ? fullName : (u.name || 'N/A');
+            phone = phone !== 'N/A' ? phone : (u.phoneNumber || 'N/A');
+          }
+        }
+
+        return {
+          ...ride,
+          customer: { fullName, email, phone },
+        };
+      } catch (e) {
+        return {
+          ...ride,
+          customer: { fullName: 'N/A', email: 'N/A', phone: 'N/A' },
+        };
+      }
+    }));
 
     // Sort in descending order by createdAt. Support Firestore Timestamp objects
     // (which have toDate()) as well as Date/string values.
@@ -120,9 +178,8 @@ const getAllPrivateRides = async (req, res) => {
       }
     };
 
-    rides.sort((a, b) => parseTime(b.createdAt) - parseTime(a.createdAt));
-
-    res.json({ success: true, data: { rides, count: rides.length } });
+    ridesWithCustomer.sort((a, b) => parseTime(b.createdAt) - parseTime(a.createdAt));
+    res.json({ success: true, data: { rides: ridesWithCustomer, count: ridesWithCustomer.length } });
   } catch (error) {
     console.error('Error fetching private rides:', error);
     // Firestore returns a helpful message with an index creation URL when a composite index is required.
