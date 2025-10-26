@@ -75,14 +75,26 @@ class SharedRide {
         bookings: rideData.bookings || []
       };
 
-      const rideRef = db.collection('sharedRides').doc();
+      // Use readable custom id for ride documents: SMST-<6digits>-<timestamp>
+      const generateDocId = () => {
+        const sixDigits = Math.floor(100000 + Math.random() * 900000)
+        return `STSL-${sixDigits}-${Date.now()}`
+      };
+      const newId = generateDocId();
+      const rideRef = db.collection('sharedRides').doc(newId);
       const ride = new SharedRide({
         ...normalized,
         id: rideRef.id,
       });
+      // Persist readable id fields so clients can display them without relying on doc.id
+      const firestoreData = ride.toFirestore()
+      firestoreData.readableId = rideRef.id
+      firestoreData.bookingId = rideRef.id
 
-      await rideRef.set(ride.toFirestore());
-      return { id: rideRef.id, ...ride };
+  await rideRef.set(firestoreData);
+  // Read back the saved document to return the exact stored shape (including readableId/bookingId)
+  const savedDoc = await db.collection('sharedRides').doc(rideRef.id).get();
+  return { id: rideRef.id, ...(savedDoc.exists ? savedDoc.data() : firestoreData) };
     } catch (error) {
       console.error('Error creating shared ride:', error);
       throw new Error('Failed to create shared ride');
@@ -131,8 +143,20 @@ class SharedRide {
   // Get a specific shared ride
   static async getById(rideId) {
     try {
-      const rideDoc = await db.collection('sharedRides').doc(rideId).get();
-      
+      // Try direct doc lookup first (supports actual Firestore doc id)
+      let rideDoc = await db.collection('sharedRides').doc(rideId).get();
+
+      // If not found, try to find a document whose readableId or bookingId matches the provided id
+      if (!rideDoc.exists) {
+        const q1 = await db.collection('sharedRides').where('readableId', '==', rideId).limit(1).get();
+        if (!q1.empty) rideDoc = q1.docs[0];
+      }
+
+      if (!rideDoc.exists) {
+        const q2 = await db.collection('sharedRides').where('bookingId', '==', rideId).limit(1).get();
+        if (!q2.empty) rideDoc = q2.docs[0];
+      }
+
       if (!rideDoc.exists) {
         throw new Error('Shared ride not found');
       }
@@ -150,13 +174,25 @@ class SharedRide {
   // Update a shared ride
   static async update(rideId, updateData) {
     try {
-      const rideRef = db.collection('sharedRides').doc(rideId);
+      // Resolve rideId to actual document id (accept readableId/bookingId)
+      let rideRef = db.collection('sharedRides').doc(rideId);
+      const direct = await rideRef.get();
+      if (!direct.exists) {
+        // Try readableId
+        const q1 = await db.collection('sharedRides').where('readableId', '==', rideId).limit(1).get();
+        if (!q1.empty) rideRef = q1.docs[0].ref;
+        else {
+          const q2 = await db.collection('sharedRides').where('bookingId', '==', rideId).limit(1).get();
+          if (!q2.empty) rideRef = q2.docs[0].ref;
+        }
+      }
+
       await rideRef.update({
         ...updateData,
         updatedAt: new Date()
       });
 
-      const updatedRide = await this.getById(rideId);
+      const updatedRide = await this.getById(rideRef.id);
       return updatedRide;
     } catch (error) {
       console.error('Error updating shared ride:', error);
@@ -167,7 +203,25 @@ class SharedRide {
   // Delete a shared ride
   static async delete(rideId) {
     try {
-      await db.collection('sharedRides').doc(rideId).delete();
+      // Resolve to actual document id if needed
+      let rideRef = db.collection('sharedRides').doc(rideId);
+      const direct = await rideRef.get();
+      if (!direct.exists) {
+        const q1 = await db.collection('sharedRides').where('readableId', '==', rideId).limit(1).get();
+        if (!q1.empty) rideRef = q1.docs[0].ref;
+        else {
+          const q2 = await db.collection('sharedRides').where('bookingId', '==', rideId).limit(1).get();
+          if (!q2.empty) rideRef = q2.docs[0].ref;
+        }
+      }
+
+      // If document doesn't exist after resolution, throw an informative error
+      const finalDoc = await rideRef.get();
+      if (!finalDoc.exists) {
+        throw new Error('Shared ride not found');
+      }
+
+      await rideRef.delete();
       return { message: 'Shared ride deleted successfully' };
     } catch (error) {
       console.error('Error deleting shared ride:', error);
@@ -178,7 +232,17 @@ class SharedRide {
   // Book a seat in shared ride
   static async bookSeat(rideId, passengerData) {
     try {
-      const rideRef = db.collection('sharedRides').doc(rideId);
+      // Resolve provided rideId to actual document id if needed
+      let rideRef = db.collection('sharedRides').doc(rideId);
+      const direct = await rideRef.get();
+      if (!direct.exists) {
+        const q1 = await db.collection('sharedRides').where('readableId', '==', rideId).limit(1).get();
+        if (!q1.empty) rideRef = q1.docs[0].ref;
+        else {
+          const q2 = await db.collection('sharedRides').where('bookingId', '==', rideId).limit(1).get();
+          if (!q2.empty) rideRef = q2.docs[0].ref;
+        }
+      }
 
       // Use a transaction to avoid race conditions when multiple users book concurrently
       const booking = await db.runTransaction(async (tx) => {
@@ -231,8 +295,12 @@ class SharedRide {
           throw new Error('No seats available')
         }
 
+        const generateBookingId = () => {
+          const sixDigits = Math.floor(100000 + Math.random() * 900000)
+          return `STSL-${sixDigits}-${Date.now()}`
+        };
         const newBooking = {
-          id: db.collection('bookings').doc().id,
+          id: generateBookingId(),
           rideId: rideId,
           passengerName: passengerData.passengerName,
           passengerPhone: passengerData.passengerPhone,

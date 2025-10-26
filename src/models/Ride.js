@@ -44,7 +44,9 @@ class Ride {
   // Create a new ride
   static async create(rideData) {
     try {
-      const rideRef = db.collection('rides').doc();
+      const generateDocId = () => `STST-${Date.now()}-${Math.floor(Math.random() * 9000) + 1000}`;
+      const newId = generateDocId();
+      const rideRef = db.collection('rides').doc(newId);
       const ride = new Ride({ ...rideData, id: rideRef.id });
       await rideRef.set(ride.toFirestore());
       return ride;

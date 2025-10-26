@@ -22,15 +22,18 @@ class Booking {
   // Create a new booking
   static async create(bookingData) {
     try {
-      const bookingRef = db.collection('bookings').doc();
+      // Generate a readable/custom document id for Firestore (e.g. SMST-<timestamp>-<4digits>)
+      const generateDocId = () => `STSL-${Date.now()}-${Math.floor(Math.random() * 9000) + 1000}`;
+      const newId = generateDocId();
+      const bookingRef = db.collection('bookings').doc(newId);
       const bookingNumber = await this.generateBookingNumber();
-      
-      const booking = new Booking({ 
-        ...bookingData, 
+
+      const booking = new Booking({
+        ...bookingData,
         id: bookingRef.id,
-        bookingNumber 
+        bookingNumber,
       });
-      
+
       await bookingRef.set(booking.toFirestore());
       return booking;
     } catch (error) {

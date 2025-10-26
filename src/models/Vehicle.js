@@ -20,7 +20,9 @@ class Vehicle {
   // Create a new vehicle
   static async create(vehicleData) {
     try {
-      const vehicleRef = db.collection('vehicles').doc();
+      const generateDocId = () => `STSL-${Date.now()}-${Math.floor(Math.random() * 9000) + 1000}`;
+      const newId = generateDocId();
+      const vehicleRef = db.collection('vehicles').doc(newId);
       const vehicle = new Vehicle({
         ...vehicleData,
         id: vehicleRef.id,
