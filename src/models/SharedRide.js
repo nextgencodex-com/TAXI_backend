@@ -264,24 +264,26 @@ class SharedRide {
         let currentAvailable = null
 
         if (ride && typeof ride.availableSeats === 'number') {
-          // Prefer stored availableSeats unless it seems inconsistent with totalSeats/bookings
-          const stored = Number(ride.availableSeats)
-          if (inferredAvailable !== null && inferredAvailable !== stored) {
-            // If inferredAvailable indicates more seats than stored (likely stored is stale), prefer inferredAvailable
-            if (inferredAvailable > stored) {
-              console.warn(`Available seats mismatch for ride ${rideId}: stored=${stored}, inferred=${inferredAvailable} (from totalSeats=${totalSeatsFromDoc} bookings=${bookedAlready}). Using inferred.`)
-              currentAvailable = inferredAvailable
+          // Prefer stored availableSeats as authoritative when present. Only fall back to
+          // inferred availability if stored value appears invalid (e.g. negative or exceeds totalSeats).
+          const stored = Number(ride.availableSeats);
+          if (inferredAvailable !== null && typeof totalSeatsFromDoc === 'number') {
+            // If stored is obviously invalid compared to totalSeats (greater than total or negative),
+            // prefer inferredAvailable derived from totalSeats/bookings. Otherwise keep stored value.
+            if (stored < 0 || (typeof totalSeatsFromDoc === 'number' && stored > totalSeatsFromDoc)) {
+              console.warn(`Stored availableSeats for ride ${rideId} looks invalid (stored=${stored}, totalSeats=${totalSeatsFromDoc}). Using inferred available (${inferredAvailable}).`);
+              currentAvailable = inferredAvailable;
             } else {
-              // Otherwise keep stored value (could be legitimately lower)
-              console.warn(`Available seats mismatch for ride ${rideId}: stored=${stored}, inferred=${inferredAvailable}. Keeping stored.`)
-              currentAvailable = stored
+              currentAvailable = stored;
             }
           } else {
-            currentAvailable = stored
+            // No totalSeats to compare with or no inference available — use stored value.
+            currentAvailable = stored;
           }
         } else if (inferredAvailable !== null) {
-          currentAvailable = inferredAvailable
-          console.warn(`Normalized availableSeats for ride ${rideId} from totalSeats (${totalSeatsFromDoc}) and bookings (${bookedAlready}) => ${currentAvailable}`)
+          // No stored availableSeats present; use the inferred value computed from totalSeats/bookings
+          currentAvailable = inferredAvailable;
+          console.warn(`Normalized availableSeats for ride ${rideId} from totalSeats (${totalSeatsFromDoc}) and bookings (${bookedAlready}) => ${currentAvailable}`);
         }
 
         if (currentAvailable === null) {
